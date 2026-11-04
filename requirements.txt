@@ -1,6 +1,6 @@
-scikit-learn==1.3.2
-xgboost==2.0.3
-pandas==2.1.4
-numpy==1.26.4
-scipy==1.11.4
-shap==0.44.1
+# Lightweight requirements for local Python development
+# Note: Production Vercel deployment uses high-performance native Next.js API routes (app/api/)
+# to adhere to AWS Lambda's 250MB/500MB function size limits.
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<2.2.0
+scikit-learn>=1.3.0,<1.4.0

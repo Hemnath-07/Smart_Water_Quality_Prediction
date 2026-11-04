@@ -1,6 +1,0 @@
-{
-  "/page": "app/page.js",
-  "/api/predict/route": "app/api/predict/route.js",
-  "/api/train/route": "app/api/train/route.js",
-  "/api/preprocess/route": "app/api/preprocess/route.js"
-}

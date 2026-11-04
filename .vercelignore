@@ -1,0 +1,7 @@
+# Ignore Python serverless build on Vercel so Next.js native API routes (app/api/) are used
+# This prevents LAMBDA_SIZE_EXCEEDED (846 MB > 500 MB limit)
+api/
+requirements.txt
+.next/
+.git/
+*.py
