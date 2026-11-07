@@ -242,7 +242,8 @@ export default function Page() {
   const [simResult, setSimResult] = useState<PredictionRow | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [tierFilter, setTierFilter] = useState<number | 'all'>('all');
-  const [splashStep, setSplashStep] = useState(0);
+  const [splashProgress, setSplashProgress] = useState(0);
+  const [splashLoaded, setSplashLoaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Theme application ──
@@ -250,23 +251,27 @@ export default function Page() {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // ── Splash loading steps ──
+  // ── Splash loading progress bar (0% -> 100%) ──
   useEffect(() => {
     if (!showSplash) return;
-    const steps = [
-      'Initializing ML Engine...',
-      'Loading Models...',
-      'Configuring Analytics...',
-      'Ready! 🚀',
-    ];
-    let i = 0;
-    setSplashStep(0);
-    const iv = setInterval(() => {
-      i++;
-      if (i < steps.length) setSplashStep(i);
-      else clearInterval(iv);
-    }, 900);
-    return () => clearInterval(iv);
+    setSplashProgress(0);
+    setSplashLoaded(false);
+
+    const startTime = Date.now();
+    const duration = 2600; // 2.6 seconds smooth load
+
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(100, (elapsed / duration) * 100);
+      setSplashProgress(progress);
+
+      if (progress >= 100) {
+        clearInterval(timer);
+        setSplashLoaded(true);
+      }
+    }, 30);
+
+    return () => clearInterval(timer);
   }, [showSplash]);
 
   // ── Initial sim result ──
@@ -296,13 +301,14 @@ export default function Page() {
 
   // ── Dismiss splash & stop wave sound immediately (NO background sound) ──
   const dismissSplash = useCallback(() => {
+    if (!splashLoaded) return;
     try {
       const engine = getOceanWaveAudioEngine();
       engine.stopWaveIntroSound(600);
     } catch (_) {}
     setSplashFading(true);
     setTimeout(() => setShowSplash(false), 800);
-  }, []);
+  }, [splashLoaded]);
 
   // ── Waves Audio Mute toggle (Intro sound only) ──
   const toggleMute = useCallback(() => {
@@ -316,6 +322,8 @@ export default function Page() {
   // ── Replay Intro Animation & Waves Falling Sound ──
   const replayIntro = useCallback(() => {
     setShowSettings(false);
+    setSplashProgress(0);
+    setSplashLoaded(false);
     setShowSplash(true);
     setSplashFading(false);
     try {
@@ -595,7 +603,6 @@ export default function Page() {
       .map(([feat, val]) => ({ feature: feat, value: parseFloat(val.toFixed(4)), fill: val >= 0 ? '#22c55e' : '#ef4444' }));
   }, [trainData]);
 
-  const SPLASH_STEPS = ['Initializing ML Engine...', 'Loading Models...', 'Configuring Analytics...', 'Ready! 🚀'];
   const MODEL_CHIPS = ['Random Forest', 'XGBoost', 'Logistic Regression'];
   const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
   const TIER_COLORS = { 0: '#22c55e', 1: '#eab308', 2: '#ef4444' };
@@ -611,13 +618,13 @@ export default function Page() {
       {showSplash && (
         <div
           className={`splash-overlay${splashFading ? ' splash-fade-out' : ''}`}
-          onClick={dismissSplash}
-          style={{ cursor: 'pointer' }}
+          onClick={splashLoaded ? dismissSplash : undefined}
+          style={{ cursor: splashLoaded ? 'pointer' : 'default' }}
         >
           {/* Animated 60fps Anime Sea Waves Falling Canvas Video-like Background */}
           <AnimeSeaWavesCanvas />
 
-          {/* Frosted Glass Anime Intro Card */}
+          {/* Minimalist Frosted Glass Intro Card */}
           <div
             onClick={e => e.stopPropagation()}
             style={{
@@ -626,21 +633,21 @@ export default function Page() {
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: '1.25rem',
-              maxWidth: 520,
-              width: '92%',
+              gap: '1.5rem',
+              maxWidth: 480,
+              width: '90%',
               padding: '2.5rem 2rem',
               borderRadius: 24,
-              background: 'rgba(6, 18, 38, 0.72)',
+              background: 'rgba(6, 18, 38, 0.76)',
               border: '1px solid rgba(56, 189, 248, 0.35)',
-              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.7), 0 0 50px rgba(14, 165, 233, 0.25)',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.75), 0 0 50px rgba(14, 165, 233, 0.25)',
               backdropFilter: 'blur(16px)',
               WebkitBackdropFilter: 'blur(16px)',
               animation: 'logoReveal 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) both',
               cursor: 'default',
             }}
           >
-            {/* Anime Water Crest Badge Icon */}
+            {/* Water Icon Badge */}
             <div
               style={{
                 width: 80,
@@ -658,30 +665,11 @@ export default function Page() {
               <Waves size={40} style={{ color: '#bae6fd', filter: 'drop-shadow(0 0 8px #38bdf8)' }} />
             </div>
 
-            {/* Title & Tagline */}
+            {/* Title & Subtitle */}
             <div style={{ textAlign: 'center' }}>
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  padding: '0.25rem 0.85rem',
-                  borderRadius: 999,
-                  background: 'rgba(56, 189, 248, 0.15)',
-                  border: '1px solid rgba(56, 189, 248, 0.4)',
-                  fontSize: '0.72rem',
-                  color: '#7dd3fc',
-                  fontWeight: 700,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  marginBottom: '0.6rem',
-                }}
-              >
-                🌊 Anime Ocean Waves Experience
-              </div>
               <h1
                 style={{
-                  fontSize: '2.2rem',
+                  fontSize: '2.3rem',
                   fontWeight: 900,
                   lineHeight: 1.15,
                   letterSpacing: '-0.02em',
@@ -695,59 +683,18 @@ export default function Page() {
               <p
                 style={{
                   color: 'rgba(186, 230, 253, 0.85)',
-                  fontSize: '0.92rem',
-                  marginTop: '0.4rem',
+                  fontSize: '0.95rem',
+                  marginTop: '0.5rem',
                   fontWeight: 500,
-                  letterSpacing: '0.05em',
+                  letterSpacing: '0.04em',
                 }}
               >
                 AI-Powered Potability & Hydro-Analytics Engine
               </p>
             </div>
 
-            {/* Waves Falling Audio Theme Indicator & Toggle */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                width: '100%',
-                padding: '0.6rem 0.9rem',
-                borderRadius: 12,
-                background: 'rgba(14, 165, 233, 0.12)',
-                border: '1px solid rgba(56, 189, 248, 0.25)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                <span style={{ fontSize: '1.1rem' }}>🌊</span>
-                <div>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#e0f2fe' }}>
-                    Sea Waves Falling Sound (Intro Only)
-                  </div>
-                  <div style={{ fontSize: '0.65rem', color: '#7dd3fc' }}>
-                    {audioMuted ? 'Muted' : 'Playing ambient surf audio'}
-                  </div>
-                </div>
-              </div>
-              <button
-                className="btn-icon"
-                onClick={e => {
-                  e.stopPropagation();
-                  toggleMute();
-                }}
-                title={audioMuted ? 'Unmute waves sound' : 'Mute waves sound'}
-                style={{
-                  background: audioMuted ? 'rgba(239, 68, 68, 0.2)' : 'rgba(56, 189, 248, 0.25)',
-                  borderColor: audioMuted ? '#ef4444' : 'rgba(56, 189, 248, 0.5)',
-                  color: audioMuted ? '#f87171' : '#38bdf8',
-                }}
-              >
-                {audioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-              </button>
-            </div>
-
-            {/* Loading step bar */}
-            <div style={{ width: '100%' }}>
+            {/* Loading Bar */}
+            <div style={{ width: '100%', margin: '0.25rem 0' }}>
               <div
                 style={{
                   height: 5,
@@ -757,30 +704,23 @@ export default function Page() {
                 }}
               >
                 <div
-                  className="loading-bar-fill"
                   style={{
                     height: '100%',
+                    width: `${splashProgress}%`,
                     background: 'linear-gradient(90deg, #38bdf8, #2dd4bf, #6366f1)',
                     borderRadius: 999,
+                    transition: 'width 0.05s linear',
+                    boxShadow: '0 0 12px rgba(56, 189, 248, 0.6)',
                   }}
                 />
               </div>
-              <p
-                style={{
-                  marginTop: '0.5rem',
-                  fontSize: '0.75rem',
-                  color: '#94a3b8',
-                  textAlign: 'center',
-                }}
-              >
-                {SPLASH_STEPS[splashStep]}
-              </p>
             </div>
 
-            {/* Enter Button */}
-            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'center' }}>
+            {/* Enter Dashboard Button (Enabled once loading bar completes) */}
+            <div style={{ width: '100%' }}>
               <button
                 className="btn-primary"
+                disabled={!splashLoaded}
                 onClick={e => {
                   e.stopPropagation();
                   dismissSplash();
@@ -789,16 +729,20 @@ export default function Page() {
                   width: '100%',
                   justifyContent: 'center',
                   fontSize: '0.98rem',
-                  padding: '0.75rem 1.5rem',
-                  background: 'linear-gradient(135deg, #0284c7, #0ea5e9, #2dd4bf)',
-                  boxShadow: '0 4px 20px rgba(14, 165, 233, 0.45)',
+                  padding: '0.8rem 1.6rem',
+                  background: splashLoaded
+                    ? 'linear-gradient(135deg, #0284c7, #0ea5e9, #2dd4bf)'
+                    : 'rgba(255, 255, 255, 0.1)',
+                  color: splashLoaded ? '#ffffff' : 'rgba(255, 255, 255, 0.35)',
+                  cursor: splashLoaded ? 'pointer' : 'not-allowed',
+                  border: splashLoaded ? 'none' : '1px solid rgba(255, 255, 255, 0.15)',
+                  boxShadow: splashLoaded ? '0 4px 20px rgba(14, 165, 233, 0.5)' : 'none',
+                  transition: 'all 0.3s ease',
+                  opacity: splashLoaded ? 1 : 0.6,
                 }}
               >
                 <Waves size={18} /> Enter Dashboard
               </button>
-              <p style={{ fontSize: '0.68rem', color: 'rgba(148, 163, 184, 0.75)', textAlign: 'center' }}>
-                Wave audio stops completely upon entering • No background music in dashboard
-              </p>
             </div>
           </div>
         </div>
