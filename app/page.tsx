@@ -289,14 +289,27 @@ export default function Page() {
     });
   }, []);
 
-  // ── Start waves falling sound for intro ──
+  // ── Start waves falling sound for intro (with immediate gesture unlock) ──
   useEffect(() => {
-    if (showSplash) {
+    if (!showSplash) return;
+    let engine: ReturnType<typeof getOceanWaveAudioEngine> | null = null;
+    try {
+      engine = getOceanWaveAudioEngine();
+      engine.startWaveIntroSound();
+    } catch (_) {}
+
+    const onFirstInteraction = () => {
       try {
-        const engine = getOceanWaveAudioEngine();
-        engine.startWaveIntroSound();
+        if (engine) engine.resumeAndPlay();
       } catch (_) {}
-    }
+    };
+
+    const events = ['pointerdown', 'pointermove', 'mousedown', 'touchstart', 'touchend', 'keydown', 'click'];
+    events.forEach(evt => window.addEventListener(evt, onFirstInteraction, { passive: true }));
+
+    return () => {
+      events.forEach(evt => window.removeEventListener(evt, onFirstInteraction));
+    };
   }, [showSplash]);
 
   // ── Dismiss splash & stop wave sound immediately (NO background sound) ──
@@ -618,6 +631,16 @@ export default function Page() {
       {showSplash && (
         <div
           className={`splash-overlay${splashFading ? ' splash-fade-out' : ''}`}
+          onPointerDown={() => {
+            try {
+              getOceanWaveAudioEngine().resumeAndPlay();
+            } catch (_) {}
+          }}
+          onMouseEnter={() => {
+            try {
+              getOceanWaveAudioEngine().resumeAndPlay();
+            } catch (_) {}
+          }}
           onClick={splashLoaded ? dismissSplash : undefined}
           style={{ cursor: splashLoaded ? 'pointer' : 'default' }}
         >

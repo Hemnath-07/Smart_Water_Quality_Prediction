@@ -6,6 +6,7 @@
  * IMPORTANT:
  * - This audio engine runs ONLY during the intro screen.
  * - ZERO background audio is played during dashboard/app usage.
+ * - Seamlessly unlocks on initial page entrance and on the first interaction.
  * - Fully stops and releases audio nodes when the intro is dismissed.
  */
 
@@ -17,6 +18,13 @@ class OceanWaveAudioEngine {
   private timerIds: number[] = [];
   private noiseSources: AudioBufferSourceNode[] = [];
   private lfoNodes: OscillatorNode[] = [];
+  private unlockListenersAttached = false;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      this.attachGlobalUnlockListeners();
+    }
+  }
 
   private async ensureContext(): Promise<AudioContext> {
     if (!this.ctx || this.ctx.state === 'closed') {
@@ -24,9 +32,46 @@ class OceanWaveAudioEngine {
       this.ctx = new AudioCtx();
     }
     if (this.ctx.state === 'suspended') {
-      await this.ctx.resume();
+      try {
+        await this.ctx.resume();
+      } catch (_) {}
     }
     return this.ctx;
+  }
+
+  /**
+   * Attaches window listeners so that the very first user gesture anywhere
+   * (moving the pointer, touching the screen, clicking, or pressing a key)
+   * immediately awakens the AudioContext if blocked by browser autoplay policy.
+   */
+  private attachGlobalUnlockListeners(): void {
+    if (this.unlockListenersAttached || typeof window === 'undefined') return;
+    this.unlockListenersAttached = true;
+
+    const events = ['pointerdown', 'pointermove', 'click', 'touchstart', 'touchend', 'keydown'];
+
+    const handleUnlock = async () => {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        try {
+          await this.ctx.resume();
+        } catch (_) {}
+      }
+      if (!this.isWavePlaying && typeof document !== 'undefined' && document.querySelector('.splash-overlay')) {
+        await this.startWaveIntroSound();
+      }
+      if (this.ctx && this.ctx.state === 'running') {
+        events.forEach(evt => {
+          window.removeEventListener(evt, handleUnlock);
+          document.removeEventListener(evt, handleUnlock);
+        });
+        this.unlockListenersAttached = false;
+      }
+    };
+
+    events.forEach(evt => {
+      window.addEventListener(evt, handleUnlock, { once: false, passive: true });
+      document.addEventListener(evt, handleUnlock, { once: false, passive: true });
+    });
   }
 
   /**
@@ -60,15 +105,37 @@ class OceanWaveAudioEngine {
    * Starts the sea waves falling sound ONLY for the intro.
    */
   async startWaveIntroSound(): Promise<void> {
-    if (this.isWavePlaying) return;
     try {
       const ctx = await this.ensureContext();
+
+      // If already playing and audio context is running, nothing more needed
+      if (this.isWavePlaying && ctx.state === 'running') {
+        return;
+      }
+
+      // If already initialized but suspended by browser autoplay policy, resume it
+      if (this.isWavePlaying && ctx.state === 'suspended') {
+        try {
+          await ctx.resume();
+        } catch (_) {}
+        return;
+      }
 
       // Master output node
       this.masterGain = ctx.createGain();
       this.masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
       this.masterGain.gain.exponentialRampToValueAtTime(this.isMuted ? 0.0001 : 0.6, ctx.currentTime + 1.2);
       this.masterGain.connect(ctx.destination);
+
+      // Listen for browser autoplay permission changes
+      ctx.onstatechange = () => {
+        if (ctx.state === 'running' && this.masterGain) {
+          const now = ctx.currentTime;
+          this.masterGain.gain.cancelScheduledValues(now);
+          this.masterGain.gain.setValueAtTime(this.masterGain.gain.value || 0.001, now);
+          this.masterGain.gain.linearRampToValueAtTime(this.isMuted ? 0.0001 : 0.6, now + 0.8);
+        }
+      };
 
       // Create stereo ocean noise source
       const noiseBuffer = this.createOceanNoiseBuffer(ctx, 6);
@@ -184,7 +251,6 @@ class OceanWaveAudioEngine {
    * Invoked immediately when the intro is dismissed.
    */
   stopWaveIntroSound(fadeDurationMs = 800): void {
-    if (!this.isWavePlaying) return;
     this.isWavePlaying = false;
 
     this.timerIds.forEach(id => window.clearTimeout(id));
@@ -213,6 +279,20 @@ class OceanWaveAudioEngine {
         this.lfoNodes = [];
         this.masterGain = null;
       }, fadeDurationMs + 50);
+    }
+  }
+
+  /**
+   * Resumes suspended context immediately or starts playback.
+   */
+  async resumeAndPlay(): Promise<void> {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch (_) {}
+    }
+    if (!this.isWavePlaying) {
+      await this.startWaveIntroSound();
     }
   }
 
