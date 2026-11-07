@@ -15,7 +15,8 @@ import {
   PolarGrid, PolarAngleAxis, PolarRadiusAxis, PieChart, Pie,
   Cell,
 } from 'recharts';
-import { getAudioEngine } from '@/app/lib/audioEngine';
+import { getOceanWaveAudioEngine } from '@/app/lib/audioEngine';
+import { AnimeSeaWavesCanvas } from '@/app/components/AnimeSeaWavesCanvas';
 import type {
   ThemeId, PreprocessResult, TrainResult, PredictResult,
   SimulatorParams, PredictionRow,
@@ -283,24 +284,45 @@ export default function Page() {
     });
   }, []);
 
-  // ── Dismiss splash ──
-  const dismissSplash = useCallback(async () => {
+  // ── Start waves falling sound for intro ──
+  useEffect(() => {
+    if (showSplash) {
+      try {
+        const engine = getOceanWaveAudioEngine();
+        engine.startWaveIntroSound();
+      } catch (_) {}
+    }
+  }, [showSplash]);
+
+  // ── Dismiss splash & stop wave sound immediately (NO background sound) ──
+  const dismissSplash = useCallback(() => {
     try {
-      const engine = getAudioEngine();
-      await engine.fadeIn(2000);
+      const engine = getOceanWaveAudioEngine();
+      engine.stopWaveIntroSound(600);
     } catch (_) {}
     setSplashFading(true);
     setTimeout(() => setShowSplash(false), 800);
   }, []);
 
-  // ── Audio toggle ──
+  // ── Waves Audio Mute toggle (Intro sound only) ──
   const toggleMute = useCallback(() => {
     try {
-      const engine = getAudioEngine();
+      const engine = getOceanWaveAudioEngine();
       engine.setMuted(!audioMuted);
     } catch (_) {}
     setAudioMuted(m => !m);
   }, [audioMuted]);
+
+  // ── Replay Intro Animation & Waves Falling Sound ──
+  const replayIntro = useCallback(() => {
+    setShowSettings(false);
+    setShowSplash(true);
+    setSplashFading(false);
+    try {
+      const engine = getOceanWaveAudioEngine();
+      engine.startWaveIntroSound();
+    } catch (_) {}
+  }, []);
 
   // ── Generate sample data ──
   const generateSampleData = useCallback(() => {
@@ -343,7 +365,7 @@ export default function Page() {
     }
   }, []);
 
-  // ── Preprocess ──
+  // ── Preprocess (Robust JSON payload without btoa limits) ──
   const handlePreprocess = useCallback(async () => {
     if (!uploadedFile) return;
     setIsLoading(true);
@@ -352,14 +374,11 @@ export default function Page() {
     try {
       const text = await uploadedFile.text();
       setLoadingStep('Cleaning data & computing WQI...');
-      const csvB64 = btoa(unescape(encodeURIComponent(text)));
       const res = await fetch('/api/preprocess', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           csv_text: text,
-          csv_base64: csvB64,
-          csv_data: text,
         }),
       });
       if (!res.ok) {
@@ -588,86 +607,197 @@ export default function Page() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', position: 'relative' }}>
 
-      {/* ══ SPLASH SCREEN ══════════════════════════════════════════════════════ */}
+      {/* ══ ANIME SEA WAVES FALLING INTRO SCREEN ══════════════════════════════ */}
       {showSplash && (
         <div
           className={`splash-overlay${splashFading ? ' splash-fade-out' : ''}`}
           onClick={dismissSplash}
           style={{ cursor: 'pointer' }}
         >
-          {/* Particles */}
-          {Array.from({ length: 20 }, (_, i) => (
-            <div key={i} className="splash-particle" style={{
-              width: `${6 + Math.random() * 10}px`,
-              height: `${6 + Math.random() * 10}px`,
-              left: `${Math.random() * 100}%`,
-              background: `rgba(56,189,248,${0.3 + Math.random() * 0.5})`,
-              animationDuration: `${5 + Math.random() * 9}s`,
-              animationDelay: `${Math.random() * 4}s`,
-            }} />
-          ))}
-          {/* Wave rings */}
-          {[300, 200, 100].map((size, i) => (
-            <div key={i} className="wave-ring" style={{
-              width: size, height: size,
-              top: '50%', left: '50%',
-              transform: 'translate(-50%, -50%)',
-              animationDelay: `${i}s`,
-              animationDuration: '3s',
-            }} />
-          ))}
+          {/* Animated 60fps Anime Sea Waves Falling Canvas Video-like Background */}
+          <AnimeSeaWavesCanvas />
 
-          {/* Content */}
-          <div style={{ position: 'relative', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
-            {/* Icon */}
-            <div className="logo-reveal" style={{
-              width: 90, height: 90, borderRadius: '50%',
-              background: 'linear-gradient(135deg, rgba(56,189,248,0.25), rgba(99,102,241,0.25))',
-              border: '2px solid rgba(56,189,248,0.5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 0 40px rgba(56,189,248,0.3)',
-              animation: 'logoReveal 1.2s cubic-bezier(0.34,1.56,0.64,1) both',
-            }}>
-              <Droplets size={44} style={{ color: '#38bdf8' }} />
+          {/* Frosted Glass Anime Intro Card */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'relative',
+              zIndex: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '1.25rem',
+              maxWidth: 520,
+              width: '92%',
+              padding: '2.5rem 2rem',
+              borderRadius: 24,
+              background: 'rgba(6, 18, 38, 0.72)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.7), 0 0 50px rgba(14, 165, 233, 0.25)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              animation: 'logoReveal 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) both',
+              cursor: 'default',
+            }}
+          >
+            {/* Anime Water Crest Badge Icon */}
+            <div
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.4), rgba(45, 212, 191, 0.3))',
+                border: '2px solid rgba(125, 211, 252, 0.7)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 0 30px rgba(56, 189, 248, 0.5), inset 0 0 15px rgba(255, 255, 255, 0.4)',
+                animation: 'pulseGlow 2.5s ease-in-out infinite',
+              }}
+            >
+              <Waves size={40} style={{ color: '#bae6fd', filter: 'drop-shadow(0 0 8px #38bdf8)' }} />
             </div>
 
-            {/* Title */}
-            <div style={{ textAlign: 'center', animation: 'textSlideUp 0.9s ease-out 0.4s both' }}>
-              <h1 className="text-gradient" style={{ fontSize: '2.6rem', fontWeight: 900, lineHeight: 1.1, letterSpacing: '-0.02em' }}>
+            {/* Title & Tagline */}
+            <div style={{ textAlign: 'center' }}>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.25rem 0.85rem',
+                  borderRadius: 999,
+                  background: 'rgba(56, 189, 248, 0.15)',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  fontSize: '0.72rem',
+                  color: '#7dd3fc',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  marginBottom: '0.6rem',
+                }}
+              >
+                🌊 Anime Ocean Waves Experience
+              </div>
+              <h1
+                style={{
+                  fontSize: '2.2rem',
+                  fontWeight: 900,
+                  lineHeight: 1.15,
+                  letterSpacing: '-0.02em',
+                  background: 'linear-gradient(135deg, #ffffff 20%, #7dd3fc 65%, #38bdf8 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
                 Smart Water Quality
               </h1>
-              <p style={{ color: 'rgba(148,163,184,0.9)', fontSize: '1rem', marginTop: '0.5rem', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                AI-Powered Prediction System
+              <p
+                style={{
+                  color: 'rgba(186, 230, 253, 0.85)',
+                  fontSize: '0.92rem',
+                  marginTop: '0.4rem',
+                  fontWeight: 500,
+                  letterSpacing: '0.05em',
+                }}
+              >
+                AI-Powered Potability & Hydro-Analytics Engine
               </p>
-              <span style={{
-                display: 'inline-block', marginTop: '0.5rem',
-                padding: '0.2rem 0.75rem', borderRadius: 999,
-                background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.3)',
-                fontSize: '0.7rem', color: '#38bdf8', fontWeight: 600, letterSpacing: '0.06em',
-              }}>v1.0 · ML · SHAP · Real-time</span>
             </div>
 
-            {/* Loading bar */}
-            <div style={{ width: 320, animation: 'textSlideUp 0.8s ease-out 0.8s both' }}>
-              <div style={{ height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 999, overflow: 'hidden' }}>
-                <div className="loading-bar-fill" style={{ height: '100%', background: 'linear-gradient(90deg, #38bdf8, #6366f1)', borderRadius: 999 }} />
+            {/* Waves Falling Audio Theme Indicator & Toggle */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                padding: '0.6rem 0.9rem',
+                borderRadius: 12,
+                background: 'rgba(14, 165, 233, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{ fontSize: '1.1rem' }}>🌊</span>
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#e0f2fe' }}>
+                    Sea Waves Falling Sound (Intro Only)
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: '#7dd3fc' }}>
+                    {audioMuted ? 'Muted' : 'Playing ambient surf audio'}
+                  </div>
+                </div>
               </div>
-              <p style={{ marginTop: '0.75rem', fontSize: '0.78rem', color: 'rgba(148,163,184,0.8)', textAlign: 'center', minHeight: 20 }}>
+              <button
+                className="btn-icon"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleMute();
+                }}
+                title={audioMuted ? 'Unmute waves sound' : 'Mute waves sound'}
+                style={{
+                  background: audioMuted ? 'rgba(239, 68, 68, 0.2)' : 'rgba(56, 189, 248, 0.25)',
+                  borderColor: audioMuted ? '#ef4444' : 'rgba(56, 189, 248, 0.5)',
+                  color: audioMuted ? '#f87171' : '#38bdf8',
+                }}
+              >
+                {audioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              </button>
+            </div>
+
+            {/* Loading step bar */}
+            <div style={{ width: '100%' }}>
+              <div
+                style={{
+                  height: 5,
+                  background: 'rgba(255, 255, 255, 0.12)',
+                  borderRadius: 999,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  className="loading-bar-fill"
+                  style={{
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #38bdf8, #2dd4bf, #6366f1)',
+                    borderRadius: 999,
+                  }}
+                />
+              </div>
+              <p
+                style={{
+                  marginTop: '0.5rem',
+                  fontSize: '0.75rem',
+                  color: '#94a3b8',
+                  textAlign: 'center',
+                }}
+              >
                 {SPLASH_STEPS[splashStep]}
               </p>
             </div>
 
-            {/* Enter button */}
-            <div style={{ animation: 'textSlideUp 0.8s ease-out 1.2s both', textAlign: 'center' }}>
+            {/* Enter Button */}
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'center' }}>
               <button
                 className="btn-primary"
-                onClick={e => { e.stopPropagation(); dismissSplash(); }}
-                style={{ fontSize: '0.95rem', padding: '0.75rem 2rem' }}
+                onClick={e => {
+                  e.stopPropagation();
+                  dismissSplash();
+                }}
+                style={{
+                  width: '100%',
+                  justifyContent: 'center',
+                  fontSize: '0.98rem',
+                  padding: '0.75rem 1.5rem',
+                  background: 'linear-gradient(135deg, #0284c7, #0ea5e9, #2dd4bf)',
+                  boxShadow: '0 4px 20px rgba(14, 165, 233, 0.45)',
+                }}
               >
-                <Waves size={18} /> Enter System
+                <Waves size={18} /> Enter Dashboard
               </button>
-              <p style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'rgba(148,163,184,0.5)' }}>
-                Tap anywhere to continue
+              <p style={{ fontSize: '0.68rem', color: 'rgba(148, 163, 184, 0.75)', textAlign: 'center' }}>
+                Wave audio stops completely upon entering • No background music in dashboard
               </p>
             </div>
           </div>
@@ -724,8 +854,8 @@ export default function Page() {
                   {audioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
                   {audioMuted ? 'Unmute' : 'Mute'}
                 </button>
-                <button className="btn-ghost" onClick={() => { setShowSettings(false); setShowSplash(true); setSplashFading(false); }} style={{ flex: 1, justifyContent: 'center' }}>
-                  <RefreshCw size={14} /> Replay Intro
+                <button className="btn-ghost" onClick={replayIntro} style={{ flex: 1, justifyContent: 'center' }}>
+                  <RefreshCw size={14} /> Replay Intro & Waves Sound
                 </button>
               </div>
             </div>
@@ -770,9 +900,9 @@ export default function Page() {
               ● {trainData.best_model_name}
             </span>
           )}
-          {/* Mute */}
-          <button className="btn-icon" onClick={toggleMute} title={audioMuted ? 'Unmute' : 'Mute'}>
-            {audioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          {/* Replay Anime Sea Waves Intro */}
+          <button className="btn-icon" onClick={replayIntro} title="Replay Anime Sea Waves Intro & Sound">
+            <Waves size={16} style={{ color: 'var(--accent-primary)' }} />
           </button>
           {/* Theme indicator */}
           <span style={{ fontSize: '1.1rem' }}>{THEMES.find(t => t.id === theme)?.emoji}</span>

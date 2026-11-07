@@ -1,31 +1,27 @@
 /**
- * Smart Water Quality – Ambient Audio Engine
- * Synthesizes calming, flowing ambient music using the Web Audio API.
- * No external audio files required — everything is generated procedurally.
+ * Smart Water Quality – Anime Sea Waves Falling Intro Audio Engine
+ * Procedurally synthesizes the sound of ocean waves swelling, falling, and crashing
+ * using the browser's native Web Audio API.
+ *
+ * IMPORTANT:
+ * - This audio engine runs ONLY during the intro screen.
+ * - ZERO background audio is played during dashboard/app usage.
+ * - Fully stops and releases audio nodes when the intro is dismissed.
  */
 
-type OscillatorType = 'sine' | 'sawtooth' | 'triangle' | 'square';
-
-interface OscLayer {
-  osc: OscillatorNode;
-  gain: GainNode;
-  freq: number;
-}
-
-class WaterAudioEngine {
+class OceanWaveAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
-  private layers: OscLayer[] = [];
-  private noiseNode: AudioBufferSourceNode | null = null;
-  private noiseGain: GainNode | null = null;
-  private lfoNodes: OscillatorNode[] = [];
-  private isPlaying = false;
+  private isWavePlaying = false;
   private isMuted = false;
-  private _timeouts: number[] = [];
+  private timerIds: number[] = [];
+  private noiseSources: AudioBufferSourceNode[] = [];
+  private lfoNodes: OscillatorNode[] = [];
 
   private async ensureContext(): Promise<AudioContext> {
     if (!this.ctx || this.ctx.state === 'closed') {
-      this.ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.ctx = new AudioCtx();
     }
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume();
@@ -33,164 +29,223 @@ class WaterAudioEngine {
     return this.ctx;
   }
 
-  private createPinkNoiseBuffer(ctx: AudioContext, seconds: number): AudioBuffer {
+  /**
+   * Generates a 6-second stereo pink/ocean noise buffer.
+   * Pink noise rolls off at -3dB/octave, creating the natural warm mass of ocean water.
+   */
+  private createOceanNoiseBuffer(ctx: AudioContext, seconds = 6): AudioBuffer {
     const sampleRate = ctx.sampleRate;
     const frameCount = sampleRate * seconds;
-    const buffer = ctx.createBuffer(1, frameCount, sampleRate);
-    const data = buffer.getChannelData(0);
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    for (let i = 0; i < frameCount; i++) {
-      const white = Math.random() * 2 - 1;
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
-      b6 = white * 0.115926;
+    const buffer = ctx.createBuffer(2, frameCount, sampleRate);
+
+    for (let channel = 0; channel < 2; channel++) {
+      const data = buffer.getChannelData(channel);
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < frameCount; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.14;
+        b6 = white * 0.115926;
+      }
     }
     return buffer;
   }
 
-  private buildLayer(
-    ctx: AudioContext,
-    dest: AudioNode,
-    freq: number,
-    type: OscillatorType,
-    gainVal: number,
-    lfoFreq: number,
-    lfoDepth: number
-  ): OscLayer {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    lfo.type = 'sine';
-    lfo.frequency.value = lfoFreq;
-    lfoGain.gain.value = lfoDepth;
-    lfo.connect(lfoGain);
-    lfoGain.connect(osc.frequency);
-    gain.gain.value = gainVal;
-    osc.connect(gain);
-    gain.connect(dest);
-    osc.start();
-    lfo.start();
-    this.lfoNodes.push(lfo);
-    return { osc, gain, freq };
-  }
-
-  async play(): Promise<void> {
-    if (this.isPlaying) return;
-    const ctx = await this.ensureContext();
-    this.masterGain = ctx.createGain();
-    this.masterGain.gain.value = this.isMuted ? 0 : 0.55;
-    this.masterGain.connect(ctx.destination);
-
-    // Simple reverb via convolver
-    const reverb = ctx.createConvolver();
-    const reverbBuffer = ctx.createBuffer(2, ctx.sampleRate * 3, ctx.sampleRate);
-    for (let c = 0; c < 2; c++) {
-      const d = reverbBuffer.getChannelData(c);
-      for (let i = 0; i < d.length; i++) {
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
-      }
-    }
-    reverb.buffer = reverbBuffer;
-
-    const dry = ctx.createGain(); dry.gain.value = 0.65; dry.connect(this.masterGain);
-    const wet = ctx.createGain(); wet.gain.value = 0.35; wet.connect(reverb); reverb.connect(this.masterGain);
-    const blend = ctx.createGain(); blend.gain.value = 1; blend.connect(dry); blend.connect(wet);
-
-    // Pentatonic Dm pad layers
-    const rootFreqs = [146.83, 174.61, 220.0, 261.63, 293.66];
-    rootFreqs.forEach((f, i) => {
-      this.layers.push(this.buildLayer(ctx, blend, f, 'sine', Math.max(0.03, 0.12 - i * 0.015), 0.05 + i * 0.02, 0.4 + i * 0.1));
-    });
-
-    // Sub-bass
-    this.layers.push(this.buildLayer(ctx, blend, 73.41, 'triangle', 0.08, 0.03, 0.5));
-
-    // Pink noise water texture
-    const noiseBuf = this.createPinkNoiseBuffer(ctx, 5);
-    this.noiseNode = ctx.createBufferSource();
-    this.noiseNode.buffer = noiseBuf;
-    this.noiseNode.loop = true;
-    const noiseFilter = ctx.createBiquadFilter();
-    noiseFilter.type = 'lowpass';
-    noiseFilter.frequency.value = 700;
-    this.noiseGain = ctx.createGain(); this.noiseGain.gain.value = 0.035;
-    this.noiseNode.connect(noiseFilter);
-    noiseFilter.connect(this.noiseGain);
-    this.noiseGain.connect(blend);
-    this.noiseNode.start();
-
-    // Chord evolution
-    const chords = [
-      [146.83, 174.61, 220.0],
-      [164.81, 196.00, 246.94],
-      [196.00, 233.08, 293.66],
-      [174.61, 220.00, 261.63],
-    ];
-    let chordIdx = 0;
-    const advance = () => {
-      if (!this.isPlaying) return;
-      chordIdx = (chordIdx + 1) % chords.length;
-      const now = ctx.currentTime;
-      this.layers.slice(0, 3).forEach((layer, i) => {
-        layer.osc.frequency.setTargetAtTime(chords[chordIdx][i], now, 4);
-      });
-      this._timeouts.push(window.setTimeout(advance, 12000 + Math.random() * 6000));
-    };
-    this._timeouts.push(window.setTimeout(advance, 12000));
-
-    this.isPlaying = true;
-  }
-
-  stop(): void {
-    this.isPlaying = false;
+  /**
+   * Starts the sea waves falling sound ONLY for the intro.
+   */
+  async startWaveIntroSound(): Promise<void> {
+    if (this.isWavePlaying) return;
     try {
-      this.layers.forEach(l => { try { l.osc.stop(); } catch (_) {} l.gain.disconnect(); });
-      this.lfoNodes.forEach(l => { try { l.stop(); } catch (_) {} });
-      try { this.noiseNode?.stop(); } catch (_) {}
-      this.masterGain?.disconnect();
-    } catch (_) {}
-    this.layers = [];
-    this.lfoNodes = [];
-    this.noiseNode = null;
-    this.masterGain = null;
-    this._timeouts.forEach(id => window.clearTimeout(id));
-    this._timeouts = [];
+      const ctx = await this.ensureContext();
+
+      // Master output node
+      this.masterGain = ctx.createGain();
+      this.masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
+      this.masterGain.gain.exponentialRampToValueAtTime(this.isMuted ? 0.0001 : 0.6, ctx.currentTime + 1.2);
+      this.masterGain.connect(ctx.destination);
+
+      // Create stereo ocean noise source
+      const noiseBuffer = this.createOceanNoiseBuffer(ctx, 6);
+      const noiseSource = ctx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      this.noiseSources.push(noiseSource);
+
+      // Filter 1: Low-frequency ocean body / swell (sub & undertow)
+      const lowFilter = ctx.createBiquadFilter();
+      lowFilter.type = 'lowpass';
+      lowFilter.frequency.setValueAtTime(160, ctx.currentTime);
+      lowFilter.Q.setValueAtTime(1.8, ctx.currentTime);
+
+      const lowGain = ctx.createGain();
+      lowGain.gain.setValueAtTime(0.35, ctx.currentTime);
+
+      // Filter 2: Mid-frequency wave crash & surging water
+      const midFilter = ctx.createBiquadFilter();
+      midFilter.type = 'bandpass';
+      midFilter.frequency.setValueAtTime(450, ctx.currentTime);
+      midFilter.Q.setValueAtTime(2.2, ctx.currentTime);
+
+      const midGain = ctx.createGain();
+      midGain.gain.setValueAtTime(0.4, ctx.currentTime);
+
+      // Filter 3: High-frequency foam spray and falling droplets
+      const sprayFilter = ctx.createBiquadFilter();
+      sprayFilter.type = 'highpass';
+      sprayFilter.frequency.setValueAtTime(1800, ctx.currentTime);
+      sprayFilter.Q.setValueAtTime(0.8, ctx.currentTime);
+
+      const sprayGain = ctx.createGain();
+      sprayGain.gain.setValueAtTime(0.08, ctx.currentTime);
+
+      // Connect noise through all 3 spectral bands
+      noiseSource.connect(lowFilter);
+      lowFilter.connect(lowGain);
+      lowGain.connect(this.masterGain);
+
+      noiseSource.connect(midFilter);
+      midFilter.connect(midGain);
+      midGain.connect(this.masterGain);
+
+      noiseSource.connect(sprayFilter);
+      sprayFilter.connect(sprayGain);
+      sprayGain.connect(this.masterGain);
+
+      // Rhythmic Wave Cycle modulation:
+      // Simulates waves building up, pitching over and falling/crashing, then receding foam
+      const waveCycleDuration = 6.5; // seconds per wave
+
+      const scheduleWaveSwell = () => {
+        if (!this.isWavePlaying || !this.ctx || !this.masterGain) return;
+        const now = this.ctx.currentTime;
+
+        // Stage 1: Build-up / swell rising (0 -> 2.6s)
+        lowFilter.frequency.cancelScheduledValues(now);
+        lowFilter.frequency.setValueAtTime(140, now);
+        lowFilter.frequency.exponentialRampToValueAtTime(380, now + 2.4);
+
+        midFilter.frequency.cancelScheduledValues(now);
+        midFilter.frequency.setValueAtTime(320, now);
+        midFilter.frequency.exponentialRampToValueAtTime(1100, now + 2.5);
+
+        lowGain.gain.cancelScheduledValues(now);
+        lowGain.gain.setValueAtTime(0.18, now);
+        lowGain.gain.linearRampToValueAtTime(0.5, now + 2.4);
+
+        midGain.gain.cancelScheduledValues(now);
+        midGain.gain.setValueAtTime(0.1, now);
+        midGain.gain.linearRampToValueAtTime(0.45, now + 2.5);
+
+        // Stage 2: Wave crest falls and crashes down! (2.5s -> 3.8s)
+        sprayGain.gain.cancelScheduledValues(now);
+        sprayGain.gain.setValueAtTime(0.02, now);
+        sprayGain.gain.setValueAtTime(0.02, now + 2.3);
+        sprayGain.gain.linearRampToValueAtTime(0.24, now + 2.7); // Falling water spray burst
+        sprayGain.gain.exponentialRampToValueAtTime(0.03, now + 4.2); // Receding foam sizzle
+
+        // Stage 3: Foam wash & water receding into the sea (3.8s -> 6.5s)
+        midFilter.frequency.exponentialRampToValueAtTime(260, now + 5.8);
+        lowFilter.frequency.exponentialRampToValueAtTime(120, now + 6.0);
+        lowGain.gain.linearRampToValueAtTime(0.15, now + 6.0);
+        midGain.gain.linearRampToValueAtTime(0.08, now + 6.0);
+
+        // Schedule next wave
+        const tid = window.setTimeout(scheduleWaveSwell, (waveCycleDuration - 0.2) * 1000);
+        this.timerIds.push(tid);
+      };
+
+      // Add gentle sub-harmonic resonance oscillator (ocean body depth)
+      const subOsc = ctx.createOscillator();
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(54, ctx.currentTime);
+      const subGain = ctx.createGain();
+      subGain.gain.setValueAtTime(0.04, ctx.currentTime);
+      subOsc.connect(subGain);
+      subGain.connect(this.masterGain);
+      subOsc.start();
+      this.lfoNodes.push(subOsc);
+
+      noiseSource.start();
+      this.isWavePlaying = true;
+      scheduleWaveSwell();
+    } catch (err) {
+      console.warn('Web Audio Wave Synth error (intro only):', err);
+    }
   }
 
-  setMuted(muted: boolean): void {
-    this.isMuted = muted;
+  /**
+   * Smoothly stops all ocean wave audio.
+   * Invoked immediately when the intro is dismissed.
+   */
+  stopWaveIntroSound(fadeDurationMs = 800): void {
+    if (!this.isWavePlaying) return;
+    this.isWavePlaying = false;
+
+    this.timerIds.forEach(id => window.clearTimeout(id));
+    this.timerIds = [];
+
     if (this.masterGain && this.ctx) {
       const now = this.ctx.currentTime;
-      this.masterGain.gain.setTargetAtTime(muted ? 0 : 0.55, now, 0.3);
+      const fadeSec = Math.max(0.1, fadeDurationMs / 1000);
+      try {
+        this.masterGain.gain.cancelScheduledValues(now);
+        this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+        this.masterGain.gain.exponentialRampToValueAtTime(0.0001, now + fadeSec);
+      } catch (_) {}
+
+      setTimeout(() => {
+        try {
+          this.noiseSources.forEach(s => {
+            try { s.stop(); s.disconnect(); } catch (_) {}
+          });
+          this.lfoNodes.forEach(o => {
+            try { o.stop(); o.disconnect(); } catch (_) {}
+          });
+          this.masterGain?.disconnect();
+        } catch (_) {}
+        this.noiseSources = [];
+        this.lfoNodes = [];
+        this.masterGain = null;
+      }, fadeDurationMs + 50);
     }
   }
 
-  getMuted(): boolean { return this.isMuted; }
-  getPlaying(): boolean { return this.isPlaying; }
-
-  async fadeIn(durationMs: number): Promise<void> {
-    if (!this.isPlaying) await this.play();
-    if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      this.masterGain.gain.linearRampToValueAtTime(0.55, this.ctx.currentTime + durationMs / 1000);
+  /**
+   * Toggle mute for intro sound.
+   */
+  setMuted(muted: boolean): void {
+    this.isMuted = muted;
+    if (this.masterGain && this.ctx && this.isWavePlaying) {
+      const now = this.ctx.currentTime;
+      this.masterGain.gain.setTargetAtTime(muted ? 0.0001 : 0.6, now, 0.2);
     }
+  }
+
+  getMuted(): boolean {
+    return this.isMuted;
+  }
+
+  isPlaying(): boolean {
+    return this.isWavePlaying;
   }
 }
 
-let engineInstance: WaterAudioEngine | null = null;
+let waveEngineInstance: OceanWaveAudioEngine | null = null;
 
-export function getAudioEngine(): WaterAudioEngine {
-  if (typeof window === 'undefined') throw new Error('AudioEngine: browser only');
-  if (!engineInstance) engineInstance = new WaterAudioEngine();
-  return engineInstance;
+export function getOceanWaveAudioEngine(): OceanWaveAudioEngine {
+  if (typeof window === 'undefined') {
+    throw new Error('OceanWaveAudioEngine is browser only');
+  }
+  if (!waveEngineInstance) {
+    waveEngineInstance = new OceanWaveAudioEngine();
+  }
+  return waveEngineInstance;
 }
 
-export type { WaterAudioEngine };
+export type { OceanWaveAudioEngine };

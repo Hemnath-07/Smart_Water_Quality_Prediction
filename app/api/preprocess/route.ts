@@ -1,49 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Canonical columns and their extensive alias mappings
+// Canonical columns and extensive alias mappings covering EPA, WHO, Kaggle, USGS, and municipal datasets
 const COLUMN_ALIASES: Record<string, string[]> = {
   ph: [
     'ph', 'ph_value', 'ph_level', 'water_ph', 'ph_water', 'phval',
-    'potential_hydrogen', 'ph_in_water', 'ph_units', 'ph_std_units'
+    'potential_hydrogen', 'ph_in_water', 'ph_units', 'ph_std_units',
+    'field_ph', 'lab_ph', 'ph_measurement', 'potential_of_hydrogen'
   ],
   Hardness: [
     'hardness', 'total_hardness', 'hardness_mg_l', 'hardness_ppm',
     'water_hardness', 'calcium_hardness', 'ca_hardness', 'mg_hardness',
-    'hardness_mg_caco3_l', 'ca_mg_hardness'
+    'hardness_mg_caco3_l', 'ca_mg_hardness', 'caco3', 'th', 'total_hardness_ppm'
   ],
   Solids: [
     'solids', 'tds', 'total_dissolved_solids', 'solids_ppm', 'solids_mg_l',
-    'dissolved_solids', 'total_solids', 'filter_residue', 'ts'
+    'dissolved_solids', 'total_solids', 'filter_residue', 'ts', 'tds_mg_l',
+    'total_dissolved_solids_mg_l', 'tss', 'suspended_solids', 'total_suspended_solids'
   ],
   Chloramines: [
     'chloramines', 'chloramine', 'total_chloramines', 'chloramines_ppm',
     'chloramines_mg_l', 'chlorine', 'free_chlorine', 'residual_chlorine',
-    'chlorine_residual'
+    'chlorine_residual', 'total_chlorine', 'cl2', 'chlorine_mg_l', 'free_residual_chlorine'
   ],
   Sulfate: [
     'sulfate', 'sulphate', 'sulfates', 'sulphates', 'so4', 'sulfate_mg_l',
-    'so4_mg_l', 'sulphate_mg_l'
+    'so4_mg_l', 'sulphate_mg_l', 'so4_2', 'sulfate_ppm', 'sulphate_ppm'
   ],
   Conductivity: [
     'conductivity', 'electrical_conductivity', 'ec', 'cond', 'cond_us_cm',
-    'sp_cond', 'conductance', 'specific_conductance', 'ec_us_cm'
+    'sp_cond', 'conductance', 'specific_conductance', 'ec_us_cm', 'conductivity_us_cm',
+    'electric_conductivity', 'conductance_us_cm'
   ],
   Organic_carbon: [
     'organic_carbon', 'toc', 'total_organic_carbon', 'organic_carbon_ppm',
-    'organic_carbon_mg_l', 'doc', 'dissolved_organic_carbon'
+    'organic_carbon_mg_l', 'doc', 'dissolved_organic_carbon', 'toc_mg_l',
+    'total_organic_carbon_mg_l', 'organic_matter'
   ],
   Trihalomethanes: [
     'trihalomethanes', 'thm', 'total_trihalomethanes', 'trihalomethanes_ug_l',
-    'tthm', 'trihalomethane', 'thms'
+    'tthm', 'trihalomethane', 'thms', 'total_thm', 'tthms_ug_l', 'thm_ug_l'
   ],
   Turbidity: [
     'turbidity', 'turb', 'turbidity_ntu', 'turbidity_ftu', 'clarity',
-    'turbidity_jtu', 'nephelometric_turbidity'
+    'turbidity_jtu', 'nephelometric_turbidity', 'ntu', 'water_clarity', 'turbidity_units'
   ],
   Potability: [
     'potability', 'potable', 'is_potable', 'safe', 'is_safe', 'target',
     'class', 'label', 'quality', 'status', 'drinkable', 'water_quality',
-    'is_safe_for_drinking', 'result', 'drinking_water_potability'
+    'is_safe_for_drinking', 'result', 'drinking_water_potability', 'verdict',
+    'category', 'outcome', 'evaluation', 'y', 'potability_status', 'safety_tier'
   ],
 };
 
@@ -52,6 +57,7 @@ const CANONICAL_FEATURES = [
   'Conductivity', 'Organic_carbon', 'Trihalomethanes', 'Turbidity'
 ];
 
+// Baseline reference standards for water parameters (WHO / EPA guidelines)
 const DEFAULT_FEATURE_VALUES: Record<string, number> = {
   ph: 7.08,
   Hardness: 196.37,
@@ -65,17 +71,30 @@ const DEFAULT_FEATURE_VALUES: Record<string, number> = {
 };
 
 function normalizeColName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Strip BOM, non-alphanumeric, and lowercase
+  return name.replace(/^\uFEFF/, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+/**
+ * Robust CSV Line Parser supporting:
+ * - Empty fields (e.g. ",204.89", "6.63,,592.88", or trailing commas)
+ * - Quoted values containing commas or escaped quotes
+ * - Custom delimiters (comma, semicolon, tab, pipe)
+ */
 function parseCSVLine(line: string, delimiter: string): string[] {
   const result: string[] = [];
   let current = '';
   let inQuotes = false;
+
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
     if (char === '"' || char === "'") {
-      inQuotes = !inQuotes;
+      if (inQuotes && i + 1 < line.length && line[i + 1] === char) {
+        current += char;
+        i++; // skip escaped quote
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === delimiter && !inQuotes) {
       result.push(current.trim());
       current = '';
@@ -87,35 +106,59 @@ function parseCSVLine(line: string, delimiter: string): string[] {
   return result;
 }
 
+/**
+ * Parses raw CSV text into normalized headers and row records
+ */
 function parseCSV(text: string): { headers: string[]; rows: Record<string, any>[] } {
-  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  // Clean BOM and carriage returns
+  const cleanText = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const rawLines = cleanText.split('\n');
+
+  // Filter out empty lines or comment lines
+  const lines = rawLines.filter(l => {
+    const trimmed = l.trim();
+    return trimmed.length > 0 && !trimmed.startsWith('#') && !trimmed.startsWith('//');
+  });
+
   if (lines.length === 0) return { headers: [], rows: [] };
 
-  // Detect delimiter
-  const firstLine = lines[0];
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const semiCount = (firstLine.match(/;/g) || []).length;
-  const tabCount = (firstLine.match(/\t/g) || []).length;
-  let delimiter = ',';
-  if (semiCount > commaCount && semiCount > tabCount) delimiter = ';';
-  else if (tabCount > commaCount && tabCount > semiCount) delimiter = '\t';
+  // Auto-detect delimiter from the first 5 lines
+  const sample = lines.slice(0, Math.min(5, lines.length)).join('\n');
+  const commaCount = (sample.match(/,/g) || []).length;
+  const semiCount = (sample.match(/;/g) || []).length;
+  const tabCount = (sample.match(/\t/g) || []).length;
+  const pipeCount = (sample.match(/\|/g) || []).length;
 
-  const rawHeaders = parseCSVLine(lines[0], delimiter).map(h => h.replace(/^["']|["']$/g, '').trim());
+  let delimiter = ',';
+  if (semiCount > commaCount && semiCount > tabCount && semiCount > pipeCount) delimiter = ';';
+  else if (tabCount > commaCount && tabCount > semiCount && tabCount > pipeCount) delimiter = '\t';
+  else if (pipeCount > commaCount && pipeCount > semiCount && pipeCount > tabCount) delimiter = '|';
+
+  const rawHeaders = parseCSVLine(lines[0], delimiter).map(h =>
+    h.replace(/^["']|["']$/g, '').trim()
+  );
+
+  // Filter out completely empty trailing headers if line ended with an unquoted comma
+  const validHeadersCount = rawHeaders.length;
+
   const rows: Record<string, any>[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const values = parseCSVLine(lines[i], delimiter);
-    if (values.length < 2) continue;
+    // Ignore lines that have no values
+    if (values.length === 0 || (values.length === 1 && values[0] === '')) continue;
+
     const row: Record<string, any> = {};
-    for (let j = 0; j < rawHeaders.length; j++) {
+    for (let j = 0; j < validHeadersCount; j++) {
       const header = rawHeaders[j];
+      if (!header) continue;
       const val = values[j] !== undefined ? values[j].replace(/^["']|["']$/g, '').trim() : '';
       row[header] = val;
     }
     rows.push(row);
   }
 
-  return { headers: rawHeaders, rows };
+  return { headers: rawHeaders.filter(h => h.length > 0), rows };
 }
 
 function computeMedian(arr: number[]): number {
@@ -143,6 +186,9 @@ function computeStats(arr: number[]): { mean: number; std: number; min: number; 
   };
 }
 
+/**
+ * Calculates Water Quality Index (WQI) based on standard physicochemical parameters
+ */
 function calculateWQI(row: Record<string, number>): number {
   const ph = row.ph ?? 7.0;
   const turb = row.Turbidity ?? 4.0;
@@ -166,6 +212,29 @@ function calculateWQI(row: Record<string, number>): number {
   return Number(Math.max(0, Math.min(100, rawWQI)).toFixed(2));
 }
 
+/**
+ * Safely parses any cell value to a float:
+ * Supports empty strings, null, NaN, European commas (e.g. "7,45"), scientific notation
+ */
+function parseSafeFloat(val: any): number {
+  if (val === null || val === undefined) return NaN;
+  if (typeof val === 'number') return isNaN(val) ? NaN : val;
+  if (typeof val !== 'string') return NaN;
+
+  let s = val.trim();
+  if (s === '' || s === '-' || s === 'na' || s === 'n/a' || s === 'null' || s === 'none' || s === '?') {
+    return NaN;
+  }
+  // If string contains comma as decimal separator (e.g. "7,45" and no dot)
+  if (s.includes(',') && !s.includes('.')) {
+    s = s.replace(',', '.');
+  }
+  // Strip non-numeric units (e.g. "mg/L", "ppm", "NTU", "uS/cm")
+  s = s.replace(/[^0-9.\-eE+]/g, '');
+  const parsed = parseFloat(s);
+  return isNaN(parsed) ? NaN : parsed;
+}
+
 export async function POST(req: NextRequest) {
   try {
     let csvText = '';
@@ -175,26 +244,13 @@ export async function POST(req: NextRequest) {
       const body = await req.json();
       if (body.csv_text) {
         csvText = body.csv_text;
-      } else if (body.csv_base64) {
-        csvText = Buffer.from(body.csv_base64, 'base64').toString('utf-8');
       } else if (body.csv_data) {
-        const raw = body.csv_data;
-        if (typeof raw === 'string') {
-          // Check if base64 encoded
-          if (!raw.includes('\n') && !raw.includes(',') && raw.length % 4 === 0) {
-            try {
-              const decoded = Buffer.from(raw, 'base64').toString('utf-8');
-              if (decoded.includes(',') || decoded.includes('\n')) {
-                csvText = decoded;
-              } else {
-                csvText = raw;
-              }
-            } catch {
-              csvText = raw;
-            }
-          } else {
-            csvText = raw;
-          }
+        csvText = body.csv_data;
+      } else if (body.csv_base64) {
+        try {
+          csvText = Buffer.from(body.csv_base64, 'base64').toString('utf-8');
+        } catch {
+          csvText = body.csv_base64;
         }
       }
     } else if (contentType.includes('text/csv') || contentType.includes('text/plain')) {
@@ -208,18 +264,21 @@ export async function POST(req: NextRequest) {
     }
 
     if (!csvText || csvText.trim().length === 0) {
-      return NextResponse.json({ status: 'error', error: 'No CSV data received or content is empty.' }, { status: 400 });
+      return NextResponse.json(
+        { status: 'error', error: 'No CSV data received or content is empty.' },
+        { status: 400 }
+      );
     }
 
     const { headers, rows } = parseCSV(csvText);
     if (rows.length === 0) {
-      return NextResponse.json({ status: 'error', error: 'CSV file contains no valid rows.' }, { status: 400 });
+      return NextResponse.json(
+        { status: 'error', error: 'CSV file contains no valid rows.' },
+        { status: 400 }
+      );
     }
 
-    // Resolve column aliases
-    const colMap: Record<string, string> = {};
-    const usedCanonicals = new Set<string>();
-
+    // Build alias lookup table
     const normAliasMap: Record<string, string> = {};
     for (const [canonical, aliases] of Object.entries(COLUMN_ALIASES)) {
       normAliasMap[normalizeColName(canonical)] = canonical;
@@ -228,16 +287,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Resolve column mapping
+    const colMap: Record<string, string> = {};
+    const usedCanonicals = new Set<string>();
+
+    // Pass 1: Exact normalized match
     for (const header of headers) {
       const normH = normalizeColName(header);
+      if (!normH) continue;
       if (normAliasMap[normH] && !usedCanonicals.has(normAliasMap[normH])) {
         colMap[header] = normAliasMap[normH];
         usedCanonicals.add(normAliasMap[normH]);
-        continue;
       }
-      // Substring matching
+    }
+
+    // Pass 2: Prefix / token matching for remaining headers
+    for (const header of headers) {
+      if (colMap[header]) continue;
+      const normH = normalizeColName(header);
+      if (!normH || normH.length < 2) continue;
+
       for (const [normA, canonical] of Object.entries(normAliasMap)) {
-        if ((normH.includes(normA) || normA.includes(normH)) && !usedCanonicals.has(canonical)) {
+        if (normA.length < 3) continue; // skip short aliases for fuzzy matching
+        if (!usedCanonicals.has(canonical) && (normH.includes(normA) || normA.includes(normH))) {
           colMap[header] = canonical;
           usedCanonicals.add(canonical);
           break;
@@ -245,25 +317,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check if target is present
+    // Identify target column (Potability)
     const targetHeader = Object.keys(colMap).find(k => colMap[k] === 'Potability');
     const hasTarget = !!targetHeader;
 
-    // Track missing values before cleaning
+    // Track missing values before imputation
     const missingBefore: Record<string, number> = {};
     for (const f of CANONICAL_FEATURES) {
       missingBefore[f] = 0;
     }
 
-    // Parse numeric columns
+    // Parse each row into canonical features + target
     const parsedData: Record<string, number>[] = [];
 
     for (const r of rows) {
       const item: Record<string, number> = {};
+
       for (const f of CANONICAL_FEATURES) {
         const origHeader = Object.keys(colMap).find(k => colMap[k] === f);
         if (origHeader && r[origHeader] !== undefined && r[origHeader] !== '') {
-          const val = parseFloat(r[origHeader]);
+          const val = parseSafeFloat(r[origHeader]);
           if (isNaN(val)) {
             missingBefore[f]++;
             item[f] = NaN;
@@ -276,14 +349,19 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Potability target
+      // Potability target mapping
       if (hasTarget && targetHeader) {
         const rawTarget = r[targetHeader];
         if (typeof rawTarget === 'string') {
           const s = rawTarget.trim().toLowerCase();
-          item.Potability = ['1', 'true', 'yes', 'safe', 'potable', 'good'].includes(s) || parseFloat(s) >= 0.5 ? 1 : 0;
+          const isPotable = [
+            '1', 'true', 'yes', 'safe', 'potable', 'good', 'pass', 'clean', 'drinkable', 'high'
+          ].includes(s) || (parseSafeFloat(s) >= 0.5);
+          item.Potability = isPotable ? 1 : 0;
+        } else if (typeof rawTarget === 'number') {
+          item.Potability = rawTarget >= 0.5 ? 1 : 0;
         } else {
-          item.Potability = Number(rawTarget) >= 0.5 ? 1 : 0;
+          item.Potability = 0;
         }
       } else {
         item.Potability = NaN;
@@ -292,7 +370,7 @@ export async function POST(req: NextRequest) {
       parsedData.push(item);
     }
 
-    // Missing value imputation: column median
+    // Missing value imputation: column median or baseline reference
     const medians: Record<string, number> = {};
     for (const f of CANONICAL_FEATURES) {
       const validVals = parsedData.map(d => d[f]).filter(v => !isNaN(v));
@@ -311,8 +389,14 @@ export async function POST(req: NextRequest) {
         }
       }
       if (isNaN(d.Potability)) {
-        // Synthesize preliminary screening potability if unlabeled
-        const isSafe = (d.ph >= 6.5 && d.ph <= 8.5 && d.Turbidity <= 5.0 && d.Chloramines <= 8.0 && d.Sulfate <= 400.0);
+        // Synthesize screening classification for unlabeled datasets using EPA/WHO thresholds
+        const isSafe = (
+          d.ph >= 6.5 && d.ph <= 8.5 &&
+          d.Turbidity <= 5.0 &&
+          d.Chloramines <= 8.0 &&
+          d.Sulfate <= 400.0 &&
+          d.Trihalomethanes <= 80.0
+        );
         d.Potability = isSafe ? 1 : 0;
       }
     }
@@ -325,6 +409,7 @@ export async function POST(req: NextRequest) {
       const q3 = vals[Math.floor(vals.length * 0.75)];
       const iqr = q3 - q1;
       let capped = 0;
+
       if (iqr > 0) {
         const lower = q1 - 1.5 * iqr;
         const upper = q3 + 1.5 * iqr;
@@ -342,7 +427,7 @@ export async function POST(req: NextRequest) {
       outliersCapped[f] = capped;
     }
 
-    // Compute WQI for all records
+    // Compute Water Quality Index (WQI)
     const wqiValues: number[] = [];
     for (const d of parsedData) {
       d.WQI = calculateWQI(d);
@@ -351,7 +436,7 @@ export async function POST(req: NextRequest) {
 
     const wqiStats = computeStats(wqiValues);
 
-    // Compute feature statistics
+    // Compute feature statistics for dashboard charts
     const featureStats: Record<string, any> = {};
     for (const f of [...CANONICAL_FEATURES, 'WQI', 'Potability']) {
       const fVals = parsedData.map(d => d[f]);
@@ -360,9 +445,9 @@ export async function POST(req: NextRequest) {
 
     const detectedFeatures = Object.values(colMap).filter(v => CANONICAL_FEATURES.includes(v));
 
-    let summaryNote = `Processed ${parsedData.length} samples across ${detectedFeatures.length} mapped parameters.`;
+    let summaryNote = `Successfully parsed ${parsedData.length} samples with ${detectedFeatures.length} mapped water parameters.`;
     if (!hasTarget) {
-      summaryNote += ' (Unlabeled dataset: Target Potability generated from standard WHO/EPA screening rules).';
+      summaryNote += ' (Dataset is unlabeled: Potability target synthesized using WHO/EPA drinking water standards).';
     }
 
     return NextResponse.json({
@@ -383,6 +468,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (err: any) {
     console.error('Preprocessing error:', err);
-    return NextResponse.json({ status: 'error', error: `Internal preprocessing error: ${err.message}` }, { status: 500 });
+    return NextResponse.json(
+      { status: 'error', error: `Data Preprocessing failed: ${err.message}` },
+      { status: 500 }
+    );
   }
 }
