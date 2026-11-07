@@ -317,7 +317,7 @@ export default function Page() {
     if (!splashLoaded) return;
     try {
       const engine = getOceanWaveAudioEngine();
-      engine.stopWaveIntroSound(600);
+      engine.stopWaveIntroSound(300);
     } catch (_) {}
     setSplashFading(true);
     setTimeout(() => setShowSplash(false), 800);
@@ -616,6 +616,15 @@ export default function Page() {
       .map(([feat, val]) => ({ feature: feat, value: parseFloat(val.toFixed(4)), fill: val >= 0 ? '#22c55e' : '#ef4444' }));
   }, [trainData]);
 
+  // ── Loading status text upside the loading bar ──
+  const loadingStatusText = useMemo(() => {
+    if (splashProgress < 28) return 'Compiling system components...';
+    if (splashProgress < 60) return 'Analyzing water quality parameters...';
+    if (splashProgress < 88) return 'Calibrating predictive AI models...';
+    if (splashProgress < 100) return 'Optimizing environment...';
+    return 'Ready!';
+  }, [splashProgress]);
+
   const MODEL_CHIPS = ['Random Forest', 'XGBoost', 'Logistic Regression'];
   const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
   const TIER_COLORS = { 0: '#22c55e', 1: '#eab308', 2: '#ef4444' };
@@ -716,11 +725,48 @@ export default function Page() {
               </p>
             </div>
 
+            {/* Loading Bar Upside Sentences (Compiling -> Analyzing -> Ready!) */}
+            <div
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '-0.75rem',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: splashLoaded ? '#4ade80' : '#7dd3fc',
+                  letterSpacing: '0.03em',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  transition: 'color 0.3s ease',
+                }}
+              >
+                {splashLoaded && <CheckCircle size={14} style={{ color: '#4ade80' }} />}
+                {loadingStatusText}
+              </span>
+              <span
+                style={{
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-mono)',
+                  color: splashLoaded ? '#4ade80' : 'rgba(148, 163, 184, 0.9)',
+                }}
+              >
+                {Math.round(splashProgress)}%
+              </span>
+            </div>
+
             {/* Loading Bar */}
             <div style={{ width: '100%', margin: '0.25rem 0' }}>
               <div
                 style={{
-                  height: 5,
+                  height: 6,
                   background: 'rgba(255, 255, 255, 0.12)',
                   borderRadius: 999,
                   overflow: 'hidden',
@@ -730,10 +776,14 @@ export default function Page() {
                   style={{
                     height: '100%',
                     width: `${splashProgress}%`,
-                    background: 'linear-gradient(90deg, #38bdf8, #2dd4bf, #6366f1)',
+                    background: splashLoaded
+                      ? 'linear-gradient(90deg, #22c55e, #4ade80)'
+                      : 'linear-gradient(90deg, #38bdf8, #2dd4bf, #6366f1)',
                     borderRadius: 999,
                     transition: 'width 0.05s linear',
-                    boxShadow: '0 0 12px rgba(56, 189, 248, 0.6)',
+                    boxShadow: splashLoaded
+                      ? '0 0 14px rgba(74, 222, 128, 0.7)'
+                      : '0 0 12px rgba(56, 189, 248, 0.6)',
                   }}
                 />
               </div>
